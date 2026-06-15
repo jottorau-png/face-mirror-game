@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 종이 표정 변형 거울 게임 (오류 수정 버전)</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    
+    <style>
+        body {
+            margin: 0; padding: 0; overflow: hidden;
+            background-color: #1a1a2e;
+            font-family: 'Malgun Gothic', sans-serif;
+            user-select: none;
+        }
+        #game-container {
+            display: flex; width: 100vw; height: 100vh;
+        }
+        .pane {
+            width: 50%; height: 100%;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            position: relative;
+        }
+        #left-pane {
+            background-color: #f7f9fa;
+            border-right: 4px solid #333;
+        }
+        .stage-info {
+            position: absolute; top: 30px;
+            font-size: 28px; font-weight: bold;
+            background: #2ed573; color: white;
+            padding: 8px 25px; border-radius: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 10;
+        }
+        #targetImage {
+            max-width: 85%; max-height: 75%;
+            object-fit: contain; border-radius: 20px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.15);
+        }
+        #right-pane { background-color: #16161a; position: relative; }
+        canvas {
+            position: absolute; left: 50%; top: 50%;
+            transform: translate(-50%, -50%);
+            border-radius: 20px; box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            z-index: 5;
+        }
+        /* 카메라 로딩 알림 메시지 상자 */
+        #loading-msg {
+            position: absolute; color: white; font-size: 18px; text-align: center;
+            z-index: 1; pointer-events: none; line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div class="pane" id="left-pane">
+            <div id="stageTitle" class="stage-info">1단계: 기쁜 표정 변형 거울 😊</div>
+            <img id="targetImage" src="face1.png" alt="종이 표정">
+        </div>
+        <div class="pane" id="right-pane">
+            <div id="loading-msg">
+                📷 카메라를 연결하는 중입니다...<br>
+                (주소창 옆 '카메라 권한 허용'을 확인해 주세요)
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let video;
+        let faceMesh;
+        let detections = null;
+        let viewW, viewH;
+        let isVideoReady = false; // 카메라 로딩 상태 확인 변수
+
+        let currentStage = 1; 
+        const totalStages = 3;
+        let gameClear = false;
+
+        const stageData = {
+            1: { title: "1단계: 기쁜 표정 변형 거울 😊", file: "face1.png" },
+            2: { title: "2단계: 화난 표정 변형 거울 😡", file: "face2.png" },
+            3: { title: "3단계: 슬픈 표정 변형 거울 😢", file: "face3.png" }
+        };
+
+        function setup() {
+            let rightPane = select('#right-pane');
+            let rect = select('#game-container').elt.getBoundingClientRect();
+            viewW = rect.width / 2 - 40; 
+            viewH = rect.height - 60;
+
+            let canvas = createCanvas(viewW, viewH);
+            canvas.parent(rightPane);
+
+            // [수정: 브라우저 호환성 및 오류 방지를 위한 비디오 옵션 세팅]
+            video = createCapture(VIDEO, function(stream) {
+                isVideoReady = true; // 카메라 스트림이 성공적으로 들어오면 true 전환
+                let msgElement = document.getElementById('loading-msg');
+                if(msgElement) msgElement.style.display = 'none'; // 문구 숨기기
+            });
+            video.size(viewW, viewH);
+            video.hide();
+
+            // MediaPipe FaceMesh 초기화
+            faceMesh = new FaceMesh({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+            });
+
+            faceMesh.setOptions({
+                maxNumFaces: 1,
+                refineLandmarks: true,
+                minDetectionConfidence: 0.5, // 인식을 조금 더 쉽게 하기 위해 임계값 하향 조정
+                minTrackingConfidence: 0.5
+            });
+
+            faceMesh.onResults((results) => { detections = results; });
+
+            // [수정: 비디오 데이터를 검증한 후 안전하게 캡처 장치 시작]
+            const camera = new Camera(video.elt, {
+                onFrame: async () => { 
+                    if (isVideoReady && video.elt.readyState >= 2) {
+                        await faceMesh.send({ image: video.elt }); 
+                    }
+                },
+                width: viewW, height: viewH
+            });
+            camera.start().catch(err => {
+                console.error("카메라 시작 실패: ", err);
+            });
+
+            textAlign(CENTER, CENTER);
+        }
+
+        function draw() {
+            background(24);
+
+            if (gameClear) {
+                drawClearScreen();
+                return;
+            }
+
+            // 1. 카메라 영상이 준비되었을 때만 화면 출력 (검은 화면 멈춤 현상 방지)
+            if (isVideoReady) {
+                push();
+                translate(width, 0); scale(-1, 1);
+                image(video, 0, 0, width, height);
+                pop();
+            }
+
+            // 2. AI가 얼굴을 인식하면 실시간 표정 강제 변형(필터) 적용
+            if (detections && detections.multiFaceLandmarks && detections.multiFaceLandmarks.length > 0) {
+                let landmarks = detections.multiFaceLandmarks[0];
+                applyFaceDeformation(landmarks, currentStage);
+            } else {
+                // 얼굴 인식이 안 될 때 실시간 안내 피드백
+                if(isVideoReady) {
+                    push();
+                    fill(255, 234, 0); textSize(18);
+                    text("💡 화면 중앙에 얼굴이 잘 보이도록 해주세요!", width / 2, 40);
+                    pop();
+                }
+            }
+
+            // 3. 안내 및 인터페이스 UI
+            drawUI();
+        }
+
+        // --- 단계별 얼굴 부위 변형(Deformation) 알고리즘 ---
+        function applyFaceDeformation(lm, stage) {
+            function getCanvasPt(idx) {
+                return {
+                    x: (1 - lm[idx].x) * width,
+                    y: lm[idx].y * height
+                };
+            }
+
+            let leftEye = getCanvasPt(159);
+            let rightEye = getCanvasPt(386);
+            let leftBrow = getCanvasPt(70);
+            let rightBrow = getCanvasPt(300);
+
+            if (stage === 1) {
+                let lipLeft = getCanvasPt(61);
+                let lipRight = getCanvasPt(291);
+                
+                noStroke(); fill(220, 80, 80); 
+                ellipse(lipLeft.x, lipLeft.y - 15, 20, 20);
+                ellipse(lipRight.x, lipRight.y - 15, 20, 20);
+                
+                stroke(255, 230, 0); strokeWeight(5); noFill();
+                arc(leftEye.x, leftEye.y, 40, 30, PI, TWO_PI);
+                arc(rightEye.x, rightEye.y, 40, 30, PI, TWO_PI);
+
+            } else if (stage === 2) {
+                stroke(255, 0, 0, 150); strokeWeight(8);
+                line(leftBrow.x - 20, leftBrow.y - 15, leftBrow.x + 20, leftBrow.y + 10);
+                line(rightBrow.x + 20, rightBrow.y - 15, rightBrow.x - 20, rightBrow.y + 10);
+                
+                noStroke(); fill(255, 0, 0, 30); rect(0, 0, width, height);
+                drawAngrySmoke(getCanvasPt(10));
+
+            } else if (stage === 3) {
+                stroke(52, 152, 219); strokeWeight(6);
+                line(leftBrow.x - 15, leftBrow.y + 15, leftBrow.x + 20, leftBrow.y - 5);
+                line(rightBrow.x + 15, rightBrow.y + 15, rightBrow.x - 20, rightBrow.y - 5);
+                
+                noStroke(); fill(52, 152, 219, 200);
+                let tearY = leftEye.y + (frameCount % 40) * 3; 
+                ellipse(leftEye.x - 10, tearY, 12, 18);
+                ellipse(rightEye.x + 10, tearY, 12, 18);
+            }
+        }
+
+        function drawAngrySmoke(pt) {
+            push();
+            fill(255, 255, 255, 200); noStroke();
+            ellipse(pt.x - 60, pt.y - 20, 30, 30);
+            ellipse(pt.x - 75, pt.y - 30, 20, 20);
+            ellipse(pt.x + 60, pt.y - 20, 30, 30);
+            ellipse(pt.x + 75, pt.y - 30, 20, 20);
+            pop();
+        }
+
+        function drawUI() {
+            stroke(255, 255, 255, 100); strokeWeight(4); noFill();
+            rect(0, 0, width, height);
+
+            noStroke(); fill(255); textSize(20);
+            text("내 얼굴이 어떻게 변했나요? 화면을 보세요!", width / 2, height - 90);
+
+            fill(41, 128, 185);
+            rect(width / 2 - 100, height - 55, 200, 40, 10);
+            fill(255); textSize(16); fontStyle(BOLD);
+            text("다음 표정거울 보기 ▶", width / 2, height - 35);
+        }
+
+        function mousePressed() {
+            if (mouseX > width / 2 - 100 && mouseX < width / 2 + 100 && mouseY > height - 55 && mouseY < height - 15) {
+                if (currentStage < totalStages) {
+                    currentStage++;
+                    document.getElementById('stageTitle').innerText = stageData[currentStage].title;
+                    document.getElementById('targetImage').src = stageData[currentStage].file;
+                } else {
+                    gameClear = true;
+                }
+            }
+        }
+
+        function drawClearScreen() {
+            background(41, 128, 185);
+            fill(255); noStroke();
+            textSize(40); text("🎉 감정 거울 놀이 완료! 🎉", width / 2, height / 2 - 30);
+            textSize(22); text("다양한 얼굴 표정을 모두 체험해 보았어요!", width / 2, height / 2 + 20);
+        }
+    </script>
+</body>
+</html>
